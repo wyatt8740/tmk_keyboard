@@ -208,10 +208,19 @@ uint8_t matrix_scan(void)
         tick_ms = timer_read();
 
         codes = adb_host_kbd_recv(ADB_ADDR_KEYBOARD);
+        if (debug_enable && codes) xprintf("%04X ", codes);
+        if (adb_host_error) xprintf("error: %d\n", adb_host_error);
+        if (adb_host_error == -30) {
+            // Plug-in keyboard
+            matrix_init();
+            return 0;
+        }
 
         // Adjustable keybaord media keys
         if (codes == 0 && has_media_keys &&
                 (codes = adb_host_kbd_recv(ADB_ADDR_APPLIANCE))) {
+            if (debug_enable && codes) xprintf("%04X ", codes);
+            if (adb_host_error) xprintf("error: %d\n", adb_host_error);
             // key1
             switch (codes & 0x7f ) {
             case 0x00:  // Mic
@@ -252,12 +261,6 @@ uint8_t matrix_scan(void)
             }
         }
     }
-    key0 = codes>>8;
-    key1 = codes&0xFF;
-
-    if (debug_matrix && codes) {
-        print("adb_host_kbd_recv: "); phex16(codes); print("\n");
-    }
 
     if (codes == 0) {                           // no keys
         return 0;
@@ -265,12 +268,16 @@ uint8_t matrix_scan(void)
         register_key(0x7F);
     } else if (codes == 0xFFFF) {   // power key release
         register_key(0xFF);
-    } else if (key0 == 0xFF) {      // error
-        xprintf("adb_host_kbd_recv: ERROR(%d)\n", codes);
-        // something wrong or plug-in
-        matrix_init();
-        return key1;
     } else {
+        key0 = codes>>8;
+        key1 = codes&0xFF;
+        if (key0 == 0xFF) {
+            // Macally keyboard sends keys inversely against ADB protocol
+            // https://deskthority.net/workshop-f7/macally-mk96-t20116.html
+            key0 = key1;
+            key1 = 0xFF;
+        }
+
         /* Swap codes for ISO keyboard
          * https://github.com/tmk/tmk_keyboard/issues/35
          *

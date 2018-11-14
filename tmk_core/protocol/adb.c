@@ -102,42 +102,51 @@ uint16_t adb_host_mouse_recv(void)
 }
 #endif
 
+int8_t adb_host_error = 0;
+uint16_t adb_host_data = 0;
 uint16_t adb_host_talk(uint8_t addr, uint8_t reg)
 {
-    uint16_t data = 0;
+    adb_host_error = 0;
+    adb_host_data = 0;
     cli();
     attention();
     send_byte((addr<<4) | (ADB_CMD_TALK<<2) | reg);
     place_bit0();               // Stopbit(0)
-    if (!wait_data_hi(500)) {    // Service Request(310us Adjustable Keyboard): just ignored
-        sei();
-        return -30;             // something wrong
+    if (!wait_data_hi(500)) {   // Service Request(310us Adjustable Keyboard): just ignored
+        // Plug-in keyboard(Apple standard/extended, at least)
+        adb_host_error = -30;
+        goto exit;
     }
     if (!wait_data_lo(500)) {   // Tlt/Stop to Start(140-260us)
-        sei();
-        return 0;               // No data to send
+        // No data to send in keyboard(NOT ERROR)
+        adb_host_error = 0;
+        goto exit;
     }
 
     uint8_t n = 17; // start bit + 16 data bits
     do {
         uint8_t lo = (uint8_t) wait_data_hi(130);
-        if (!lo)
-            goto error;
+        if (!lo) {
+            adb_host_error = -n;
+            goto exit;
+        }
 
         uint8_t hi = (uint8_t) wait_data_lo(lo);
-        if (!hi)
-            goto error;
+        if (!hi) {
+            adb_host_error = -n;
+            goto exit;
+        }
 
         hi = lo - hi;
         lo = 130 - lo;
 
-        data <<= 1;
+        adb_host_data <<= 1;
         if (lo < hi) {
-            data |= 1;
+            adb_host_data |= 1;
         }
         else if (n == 17) {
-            sei();
-            return -20;
+            adb_host_error = -20;
+            goto exit;
         }
     }
     while ( --n );
@@ -145,15 +154,16 @@ uint16_t adb_host_talk(uint8_t addr, uint8_t reg)
     // Stop bit can't be checked normally since it could have service request lenghtening
     // and its high state never goes low.
     if (!wait_data_hi(351) || wait_data_lo(91)) {
-        sei();
-        return -21;
+        adb_host_error = -21;
+        goto exit;
     }
     sei();
-    return data;
+    adb_host_error = 0;
+    return adb_host_data;
 
-error:
+exit:
     sei();
-    return -n;
+    return 0;
 }
 
 void adb_host_listen(uint8_t addr, uint8_t reg, uint8_t data_h, uint8_t data_l)
